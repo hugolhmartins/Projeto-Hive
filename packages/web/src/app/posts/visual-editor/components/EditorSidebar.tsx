@@ -386,15 +386,33 @@ export function EditorSidebar({
           </div>
 
           {/* Glass effect */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={active.glassEffect}
-              onChange={(e) => updateActive({ glassEffect: e.target.checked, textCardEnabled: false })}
-              className="accent-primary"
-            />
-            <span className="text-xs text-text-secondary">Glass ao redor do conteudo</span>
-          </label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={active.glassEffect}
+                onChange={(e) => updateActive({ glassEffect: e.target.checked, textCardEnabled: false })}
+                className="accent-primary"
+              />
+              <span className="text-xs text-text-secondary">Glass ao redor do conteudo</span>
+            </label>
+            {active.glassEffect && (
+              <div className="pl-5 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider w-12">COR</span>
+                  <input type="color" value={active.glassColor} onChange={(e) => updateActive({ glassColor: e.target.value })} className="w-8 h-8 rounded cursor-pointer border border-border" />
+                  <input type="text" value={active.glassColor} onChange={(e) => updateActive({ glassColor: e.target.value })} className="input-field text-[11px] flex-1 h-8" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider">OPACIDADE</span>
+                    <span className="text-[10px] text-primary font-semibold">{active.glassOpacity}%</span>
+                  </div>
+                  <input type="range" min={0} max={100} value={active.glassOpacity} onChange={(e) => updateActive({ glassOpacity: Number(e.target.value) })} className="w-full accent-primary" />
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Text Card (white/colored container) */}
           <div className="border-t border-border pt-3 space-y-2">

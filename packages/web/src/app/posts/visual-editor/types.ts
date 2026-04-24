@@ -76,6 +76,8 @@ export interface SlideState {
 
   // Glass
   glassEffect: boolean;
+  glassColor: string;
+  glassOpacity: number; // 0-100
 
   // Label badge (colored pill around label text)
   labelBgEnabled: boolean;
@@ -332,6 +334,8 @@ export function emptySlide(idx: number, tpl: TemplateId = idx === 0 ? 'hero' : '
     subtitleLineHeight: 1.4,
     globalScale: 100,
     glassEffect: false,
+    glassColor: '#000000',
+    glassOpacity: 35,
     labelBgEnabled: false,
     labelBgColor: '#E84E3C',
     labelTextColor: '#ffffff',

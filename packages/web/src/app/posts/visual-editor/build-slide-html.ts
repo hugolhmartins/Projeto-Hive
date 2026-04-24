@@ -144,7 +144,8 @@ export function buildSlideHtml(
     cardOpen = `<div style="background:${cardBg};backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-radius:${s.textCardBorderRadius ?? 28}px;padding:${s.textCardPadding ?? 56}px;box-shadow:${cardShadow};">`;
     cardClose = '</div>';
   } else if (s.glassEffect) {
-    cardOpen = `<div style="background:rgba(0,0,0,0.35);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:24px;padding:48px;">`;
+    const glassBg = hexToRgba(s.glassColor || '#000000', (s.glassOpacity ?? 35) / 100);
+    cardOpen = `<div style="background:${glassBg};backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:24px;padding:48px;">`;
     cardClose = '</div>';
   }
   const glassOpen = cardOpen;
