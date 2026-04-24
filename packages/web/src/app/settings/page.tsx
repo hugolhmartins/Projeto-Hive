@@ -9,11 +9,20 @@ import {
 } from 'lucide-react';
 import { useConfirm } from '@/components/ConfirmModal';
 
+interface SettingFieldOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
 interface SettingField {
   key: string;
   label: string;
   placeholder: string;
-  type?: string;
+  type?: 'password' | 'text' | 'select';
+  options?: SettingFieldOption[];
+  defaultValue?: string;
+  hint?: string;
 }
 
 interface ServiceConfig {
@@ -45,6 +54,18 @@ const SERVICES: ServiceConfig[] = [
     iconColor: 'text-amber-600',
     fields: [
       { key: 'NANO_BANANA_API_KEY', label: 'Google Gemini API Key', placeholder: 'AIzaSyxxxxxxxxx...' },
+      {
+        key: 'NANO_BANANA_MODEL',
+        label: 'Modelo de geracao de imagem',
+        placeholder: '',
+        type: 'select',
+        defaultValue: 'gemini-3.1-flash-image-preview',
+        options: [
+          { value: 'gemini-3.1-flash-image-preview', label: 'Nano Banana Pro (recomendado)', hint: 'Mais qualidade • mais caro' },
+          { value: 'gemini-2.5-flash-image', label: 'Nano Banana 2.5', hint: 'Estavel (GA) • mais rapido e barato' },
+          { value: 'gemini-2.5-flash-image-preview', label: 'Nano Banana 2.5 Preview', hint: 'Versao preview da 2.5' },
+        ],
+      },
     ],
   },
   {
@@ -438,7 +459,8 @@ export default function SettingsPage() {
 
         {SERVICES.map((service) => {
           const Icon = service.icon;
-          const allConnected = service.fields.every((f) => settings[f.key]?.hasValue);
+          // Fields with a defaultValue (like the model selector) don't need to be saved to count as "connected"
+          const allConnected = service.fields.every((f) => settings[f.key]?.hasValue || f.defaultValue);
 
           return (
             <div key={service.name} className="card p-5">
@@ -467,7 +489,45 @@ export default function SettingsPage() {
                     {service.fields.map((field) => {
                       const setting = settings[field.key];
                       const isEditing = editValues[field.key] !== undefined && editValues[field.key] !== '';
-                      const show = showValues[field.key];
+
+                      if (field.type === 'select') {
+                        const currentValue = editValues[field.key] ?? setting?.value ?? field.defaultValue ?? '';
+                        const selectedOption = field.options?.find((o) => o.value === currentValue);
+                        return (
+                          <div key={field.key}>
+                            <label className="block text-[11px] font-semibold text-text-muted mb-1">{field.label}</label>
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={currentValue}
+                                onChange={(e) => setEditValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                                className="input-field text-xs flex-1"
+                              >
+                                {field.options?.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() => handleSave(field.key)}
+                                disabled={!isEditing || saving[field.key]}
+                                className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 bg-primary/10 text-primary hover:bg-primary/20"
+                              >
+                                {saving[field.key] ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : saved[field.key] ? (
+                                  <Check className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Save className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                            {selectedOption?.hint && (
+                              <p className="text-[10px] text-text-muted mt-1">{selectedOption.hint}</p>
+                            )}
+                          </div>
+                        );
+                      }
 
                       return (
                         <div key={field.key}>
@@ -475,7 +535,7 @@ export default function SettingsPage() {
                           <div className="flex items-center gap-2">
                             <div className="relative flex-1">
                               <input
-                                type={show ? 'text' : 'password'}
+                                type={showValues[field.key] ? 'text' : 'password'}
                                 value={editValues[field.key] ?? ''}
                                 onChange={(e) => setEditValues((v) => ({ ...v, [field.key]: e.target.value }))}
                                 className="input-field text-xs pr-8"

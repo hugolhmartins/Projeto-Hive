@@ -28,6 +28,13 @@ function mapAspectRatio(ratio?: string): string {
   return map[ratio || '1:1'] || '1:1';
 }
 
+const ALLOWED_IMAGE_MODELS = [
+  'gemini-3.1-flash-image-preview',
+  'gemini-2.5-flash-image',
+  'gemini-2.5-flash-image-preview',
+];
+const DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+
 export async function generateImage(params: GenerateImageParams): Promise<GenerateImageResult> {
   const { getSetting } = await import('../helpers/getSetting');
   const apiKey = await getSetting('NANO_BANANA_API_KEY');
@@ -35,8 +42,10 @@ export async function generateImage(params: GenerateImageParams): Promise<Genera
     throw new Error('NANO_BANANA_API_KEY not configured - add it in Settings page');
   }
 
+  const configured = await getSetting('NANO_BANANA_MODEL');
+  const model = configured && ALLOWED_IMAGE_MODELS.includes(configured) ? configured : DEFAULT_IMAGE_MODEL;
+
   const enrichedPrompt = enrichPrompt(params.prompt, params.style);
-  const model = 'gemini-3.1-flash-image-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const body = JSON.stringify({
