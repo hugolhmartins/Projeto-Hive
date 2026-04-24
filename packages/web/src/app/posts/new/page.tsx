@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
-import { Zap, Image as ImageIcon, Edit3, Clock, Send, Save, Loader2, X, Heart, MessageCircle, Share, ChevronLeft, ChevronRight, Layers, Plus, Trash2, Upload, FileText, Link as LinkIcon, Wand2, ArrowRight, Sparkles } from 'lucide-react';
+import { Zap, Image as ImageIcon, Clock, Send, Save, Loader2, X, Heart, MessageCircle, Share, ChevronLeft, ChevronRight, Layers, Plus, Trash2, Upload, FileText, Link as LinkIcon, Wand2, ArrowRight, Sparkles } from 'lucide-react';
 import { emptySlide, SlideState, AspectRatio, defaultGlobalStyle } from '../visual-editor/types';
 
 const ASPECT_RATIOS = [
@@ -67,7 +67,18 @@ export default function NewPost() {
     let generated = 0;
     const newImages: CarouselImage[] = [];
 
-    const promises = Array.from({ length: count }, async (_, i) => {
+    // Generate images and caption in parallel
+    const captionPromise = (async () => {
+      // Only auto-generate caption if it's empty (don't overwrite what the user typed)
+      if (caption.trim() || hashtags.trim()) return null;
+      try {
+        return await api.generateCaption(prompt);
+      } catch {
+        return null;
+      }
+    })();
+
+    const imagePromises = Array.from({ length: count }, async (_, i) => {
       try {
         const variation = count > 1 ? `${prompt} - variacao ${i + 1} de ${count}` : prompt;
         const result = await api.generateImage(variation, aspectRatio);
@@ -79,7 +90,7 @@ export default function NewPost() {
       }
     });
 
-    await Promise.all(promises);
+    await Promise.all(imagePromises);
 
     if (newImages.length > 0) {
       setImages((prev) => [...prev, ...newImages]);
@@ -88,6 +99,14 @@ export default function NewPost() {
       setMessage('Nenhuma imagem gerada. Tente novamente.');
       setMessageType('error');
     }
+
+    // Apply auto-generated caption if available and field is still empty
+    const cap = await captionPromise;
+    if (cap && !caption.trim() && !hashtags.trim()) {
+      setCaption(cap.caption);
+      setHashtags(cap.hashtags.join(', '));
+    }
+
     setGenProgress('');
     setGenLoading(false);
   }
@@ -195,20 +214,6 @@ export default function NewPost() {
       setGenLoading(false);
       setGenProgress('');
     }
-  }
-
-  async function handleGenerateCaption() {
-    if (!prompt) return;
-    setGenLoading(true);
-    try {
-      const result = await api.generateCaption(prompt);
-      setCaption(result.caption);
-      setHashtags(result.hashtags.join(', '));
-    } catch (err: any) {
-      setMessage(err.message || 'Erro ao gerar legenda');
-      setMessageType('error');
-    }
-    setGenLoading(false);
   }
 
   function handleRemoveImage(index: number) {
@@ -366,10 +371,7 @@ export default function NewPost() {
                   <span className="text-[10px] opacity-80 font-normal normal-case">Fundo limpo + texto separado • editável</span>
                 </button>
               </div>
-              <button onClick={handleGenerateCaption} disabled={genLoading || !prompt} className="btn-ghost w-full justify-center text-xs py-2">
-                <Edit3 className="w-4 h-4" strokeWidth={1.5} />
-                Gerar Legenda (sem imagem)
-              </button>
+              <p className="text-[10px] text-text-muted text-center">Legenda + hashtags são geradas automaticamente. Você pode editar abaixo.</p>
               {images.length > 0 && (
                 <div className="text-center">
                   <span className="text-xs text-text-muted">
