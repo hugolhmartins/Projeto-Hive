@@ -1,8 +1,46 @@
 import { prisma } from '../config/database';
 import { env } from '../config/env';
+import { minioClient } from '../config/minio';
+import sharp from 'sharp';
+import { randomUUID } from 'crypto';
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Instagram's Graph API often fails to download PNG files with
+ * error_subcode 2207052 ("Falha ao baixar mídia"), even when the URL
+ * is publicly reachable and the PNG is technically valid. JPEG is much
+ * more reliable. This helper:
+ *   - Returns the URL unchanged if it already ends in .jpg/.jpeg
+ *   - Otherwise downloads, converts to high-quality JPEG and re-uploads
+ *     to MinIO, returning the new URL.
+ */
+async function ensureJpegUrl(imageUrl: string): Promise<string> {
+  // Skip if already JPEG (by extension or content sniff later)
+  const lower = imageUrl.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return imageUrl;
+
+  console.log(`[Instagram] Converting to JPEG for Meta compatibility: ${imageUrl}`);
+  const res = await fetch(imageUrl);
+  if (!res.ok) throw new Error(`Failed to fetch image for JPEG conversion: ${res.status}`);
+  const inputBuffer = Buffer.from(await res.arrayBuffer());
+
+  // Convert to JPEG, sRGB color space, quality 92, no alpha (Meta hates alpha PNGs)
+  const jpegBuffer = await sharp(inputBuffer)
+    .flatten({ background: { r: 255, g: 255, b: 255 } }) // remove alpha by flattening on white
+    .toColorspace('srgb')
+    .jpeg({ quality: 92, progressive: false, mozjpeg: false })
+    .toBuffer();
+
+  const key = `instagram-jpeg/${Date.now()}-${randomUUID()}.jpg`;
+  await minioClient.putObject(env.MINIO_BUCKET, key, jpegBuffer, jpegBuffer.length, {
+    'Content-Type': 'image/jpeg',
+  });
+  const newUrl = `${env.MINIO_PUBLIC_URL}/${env.MINIO_BUCKET}/${key}`;
+  console.log(`[Instagram] JPEG uploaded: ${newUrl} (${(jpegBuffer.length / 1024).toFixed(0)}KB, was ${(inputBuffer.length / 1024).toFixed(0)}KB)`);
+  return newUrl;
 }
 
 /**
@@ -195,7 +233,8 @@ async function createChildContainer(publicUrl: string, token: string, igUserId: 
 }
 
 async function publishSingleImage(imageUrl: string, caption: string, token: string, igUserId: string) {
-  const publicImageUrl = await getPublicImageUrl(imageUrl);
+  const publicImageUrlRaw = await getPublicImageUrl(imageUrl);
+  const publicImageUrl = await ensureJpegUrl(publicImageUrlRaw);
   const base = getGraphBase(token);
   const userPath = resolveUserIdForToken(token, igUserId);
 
@@ -236,11 +275,12 @@ async function publishCarousel(
 ) {
   console.log(`[Instagram] Creating carousel with ${images.length} images...`);
 
-  // Step 1: Upload all images to public URLs first
+  // Step 1: Upload all images to public URLs first, then convert to JPEG
   const publicUrls: string[] = [];
   for (const img of images) {
     const publicUrl = await getPublicImageUrl(img.imageUrl);
-    publicUrls.push(publicUrl);
+    const jpegUrl = await ensureJpegUrl(publicUrl);
+    publicUrls.push(jpegUrl);
   }
 
   // Verify each carousel image URL is publicly accessible
