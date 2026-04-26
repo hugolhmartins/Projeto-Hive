@@ -1,46 +1,48 @@
 import { prisma } from '../config/database';
 import { env } from '../config/env';
-import { minioClient } from '../config/minio';
 import sharp from 'sharp';
-import { randomUUID } from 'crypto';
+import { isCloudinaryConfigured, uploadBufferToCloudinary } from '../config/cloudinary';
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
 /**
- * Instagram's Graph API often fails to download PNG files with
- * error_subcode 2207052 ("Falha ao baixar mídia"), even when the URL
- * is publicly reachable and the PNG is technically valid. JPEG is much
- * more reliable. This helper:
- *   - Returns the URL unchanged if it already ends in .jpg/.jpeg
- *   - Otherwise downloads, converts to high-quality JPEG and re-uploads
- *     to MinIO, returning the new URL.
+ * Mirror an image to Cloudinary and return the secure_url.
+ *
+ * Why we need this: Meta's Graph API maintains an opaque hostname
+ * allowlist for image_url. Self-hosted hosts (sslip.io, R2, custom
+ * domains with valid LE certs, S3 default URLs) are silently rejected
+ * with error_subcode 2207052 even when the URL is publicly reachable
+ * and the image is valid. Hosts on Meta's allowlist (Cloudinary,
+ * Wikipedia, Imgur, Unsplash, etc.) work consistently.
+ *
+ * Pipeline: download original → flatten alpha + convert to sRGB JPEG
+ * (Meta-friendly) → upload to Cloudinary → return secure_url.
  */
-async function ensureJpegUrl(imageUrl: string): Promise<string> {
-  // Skip if already JPEG (by extension or content sniff later)
-  const lower = imageUrl.toLowerCase();
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return imageUrl;
+async function ensureMetaCompatibleUrl(imageUrl: string): Promise<string> {
+  if (!isCloudinaryConfigured()) {
+    throw new Error(
+      'Cloudinary not configured — Meta requires images to be hosted on a whitelisted CDN. ' +
+      'Set CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET in env.',
+    );
+  }
 
-  console.log(`[Instagram] Converting to JPEG for Meta compatibility: ${imageUrl}`);
+  console.log(`[Instagram] Mirroring to Cloudinary for Meta compatibility: ${imageUrl}`);
   const res = await fetch(imageUrl);
-  if (!res.ok) throw new Error(`Failed to fetch image for JPEG conversion: ${res.status}`);
+  if (!res.ok) throw new Error(`Failed to fetch source image: ${res.status} ${imageUrl}`);
   const inputBuffer = Buffer.from(await res.arrayBuffer());
 
-  // Convert to JPEG, sRGB color space, quality 92, no alpha (Meta hates alpha PNGs)
+  // Convert to JPEG, sRGB, no alpha — Meta-friendly format
   const jpegBuffer = await sharp(inputBuffer)
-    .flatten({ background: { r: 255, g: 255, b: 255 } }) // remove alpha by flattening on white
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
     .toColorspace('srgb')
     .jpeg({ quality: 92, progressive: false, mozjpeg: false })
     .toBuffer();
 
-  const key = `instagram-jpeg/${Date.now()}-${randomUUID()}.jpg`;
-  await minioClient.putObject(env.MINIO_BUCKET, key, jpegBuffer, jpegBuffer.length, {
-    'Content-Type': 'image/jpeg',
-  });
-  const newUrl = `${env.MINIO_PUBLIC_URL}/${env.MINIO_BUCKET}/${key}`;
-  console.log(`[Instagram] JPEG uploaded: ${newUrl} (${(jpegBuffer.length / 1024).toFixed(0)}KB, was ${(inputBuffer.length / 1024).toFixed(0)}KB)`);
-  return newUrl;
+  const cdnUrl = await uploadBufferToCloudinary(jpegBuffer, 'openhive/instagram');
+  console.log(`[Instagram] Cloudinary URL: ${cdnUrl} (${(jpegBuffer.length / 1024).toFixed(0)}KB, was ${(inputBuffer.length / 1024).toFixed(0)}KB)`);
+  return cdnUrl;
 }
 
 /**
@@ -97,46 +99,10 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxRetries = 3)
   throw new Error(`${label} failed after ${maxRetries} retries`);
 }
 
-/**
- * If imageUrl is localhost (MinIO local), upload to a public host
- * so Instagram can download it.
- */
-async function getPublicImageUrl(imageUrl: string): Promise<string> {
-  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?\//.test(imageUrl);
-  if (!isLocal) return imageUrl;
-
-  console.log('[Instagram] Image is localhost, uploading to public host...');
-  console.log('[Instagram] Local URL:', imageUrl);
-
-  // Download from local MinIO
-  const imgRes = await fetch(imageUrl);
-  if (!imgRes.ok) throw new Error(`Failed to download local image: ${imgRes.status}`);
-  const buffer = Buffer.from(await imgRes.arrayBuffer());
-
-  // Upload to catbox.moe (free, no API key needed, 200MB limit)
-  const formData = new FormData();
-  const blob = new Blob([buffer], { type: 'image/jpeg' });
-  formData.append('reqtype', 'fileupload');
-  formData.append('fileToUpload', blob, 'image.jpg');
-
-  const uploadRes = await fetch('https://catbox.moe/user/api.php', {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!uploadRes.ok) {
-    const errText = await uploadRes.text();
-    throw new Error(`Catbox upload failed: ${uploadRes.status} ${errText}`);
-  }
-
-  const publicUrl = await uploadRes.text();
-  if (!publicUrl.startsWith('http')) {
-    throw new Error(`Catbox upload returned invalid URL: ${publicUrl}`);
-  }
-
-  console.log('[Instagram] Public URL:', publicUrl);
-  return publicUrl;
-}
+// Note: there used to be a getPublicImageUrl helper that mirrored localhost
+// URLs to catbox.moe. That's no longer needed — ensureMetaCompatibleUrl
+// always mirrors to Cloudinary (whitelisted by Meta), regardless of whether
+// the source URL is localhost, MinIO, or a public domain.
 
 async function pollContainerStatus(containerId: string, token: string, maxAttempts = 20, intervalMs = 3000) {
   const base = getGraphBase(token);
@@ -233,8 +199,7 @@ async function createChildContainer(publicUrl: string, token: string, igUserId: 
 }
 
 async function publishSingleImage(imageUrl: string, caption: string, token: string, igUserId: string) {
-  const publicImageUrlRaw = await getPublicImageUrl(imageUrl);
-  const publicImageUrl = await ensureJpegUrl(publicImageUrlRaw);
+  const publicImageUrl = await ensureMetaCompatibleUrl(imageUrl);
   const base = getGraphBase(token);
   const userPath = resolveUserIdForToken(token, igUserId);
 
@@ -275,12 +240,11 @@ async function publishCarousel(
 ) {
   console.log(`[Instagram] Creating carousel with ${images.length} images...`);
 
-  // Step 1: Upload all images to public URLs first, then convert to JPEG
+  // Step 1: Mirror each image to Cloudinary (Meta-whitelisted host)
   const publicUrls: string[] = [];
   for (const img of images) {
-    const publicUrl = await getPublicImageUrl(img.imageUrl);
-    const jpegUrl = await ensureJpegUrl(publicUrl);
-    publicUrls.push(jpegUrl);
+    const cdnUrl = await ensureMetaCompatibleUrl(img.imageUrl);
+    publicUrls.push(cdnUrl);
   }
 
   // Verify each carousel image URL is publicly accessible

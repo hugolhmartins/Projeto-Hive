@@ -31,6 +31,16 @@ const envSchema = z.object({
   MINIO_PUBLIC_URL: z.string().default('http://localhost:9000'),
   MINIO_BUCKET: z.string().default('instapost-images'),
 
+  // Cloudinary — used as the public-facing host for images sent to Meta.
+  // Meta has tightened its allowlist for image_url hostnames; self-hosted
+  // domains (sslip.io, R2, custom Let's Encrypt etc.) get rejected with
+  // error_subcode 2207052 even when the URL is publicly reachable.
+  // res.cloudinary.com is on Meta's allowlist (tested), so we mirror
+  // each image to Cloudinary right before posting.
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+
   JWT_SECRET: z.string(),
   JWT_EXPIRES_IN: z.string().default('7d'),
 
